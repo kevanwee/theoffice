@@ -29,9 +29,8 @@ import type {
   Seat,
   TileType as TileTypeVal,
 } from '../types.js';
-import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
+import { CharacterState, Direction, TILE_SIZE } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
-import { matrixEffectSeeds } from './matrixEffect.js';
 
 export class OfficeState {
   layout: OfficeLayout;
@@ -210,7 +209,7 @@ export class OfficeState {
     preferredPalette?: number,
     preferredHueShift?: number,
     preferredSeatId?: string,
-    skipSpawnEffect?: boolean,
+    _skipSpawnEffect?: boolean,
     folderName?: string,
   ): void {
     if (this.characters.has(id)) return;
@@ -259,30 +258,19 @@ export class OfficeState {
     if (folderName) {
       ch.folderName = folderName;
     }
-    if (!skipSpawnEffect) {
-      ch.matrixEffect = 'spawn';
-      ch.matrixEffectTimer = 0;
-      ch.matrixEffectSeeds = matrixEffectSeeds();
-    }
     this.characters.set(id, ch);
   }
 
   removeAgent(id: number): void {
     const ch = this.characters.get(id);
     if (!ch) return;
-    if (ch.matrixEffect === 'despawn') return; // already despawning
-    // Free seat and clear selection immediately
     if (ch.seatId) {
       const seat = this.seats.get(ch.seatId);
       if (seat) seat.assigned = false;
     }
     if (this.selectedAgentId === id) this.selectedAgentId = null;
     if (this.cameraFollowId === id) this.cameraFollowId = null;
-    // Start despawn animation instead of immediate delete
-    ch.matrixEffect = 'despawn';
-    ch.matrixEffectTimer = 0;
-    ch.matrixEffectSeeds = matrixEffectSeeds();
-    ch.bubbleType = null;
+    this.characters.delete(id);
   }
 
   /** Find seat uid at a given tile position, or null */
@@ -377,6 +365,22 @@ export class OfficeState {
     return true;
   }
 
+  /** Instantly teleport a character to a tile (used for Pokémon drag-and-drop). */
+  teleportCharacter(id: number, col: number, row: number): void {
+    const ch = this.characters.get(id);
+    if (!ch) return;
+    ch.tileCol = col;
+    ch.tileRow = row;
+    ch.x = col * TILE_SIZE + TILE_SIZE / 2;
+    ch.y = row * TILE_SIZE + TILE_SIZE / 2;
+    ch.path = [];
+    ch.moveProgress = 0;
+    ch.state = CharacterState.IDLE;
+    ch.frame = 0;
+    ch.frameTimer = 0;
+    ch.wanderTimer = 0;
+  }
+
   /** Create a sub-agent character with the parent's palette. Returns the sub-agent ID. */
   addSubagent(parentAgentId: number, parentToolId: string): number {
     const key = `${parentAgentId}:${parentToolId}`;
@@ -432,9 +436,6 @@ export class OfficeState {
     }
     ch.isSubagent = true;
     ch.parentAgentId = parentAgentId;
-    ch.matrixEffect = 'spawn';
-    ch.matrixEffectTimer = 0;
-    ch.matrixEffectSeeds = matrixEffectSeeds();
     this.characters.set(id, ch);
 
     this.subagentIdMap.set(key, id);
@@ -450,23 +451,12 @@ export class OfficeState {
 
     const ch = this.characters.get(id);
     if (ch) {
-      if (ch.matrixEffect === 'despawn') {
-        // Already despawning — just clean up maps
-        this.subagentIdMap.delete(key);
-        this.subagentMeta.delete(id);
-        return;
-      }
       if (ch.seatId) {
         const seat = this.seats.get(ch.seatId);
         if (seat) seat.assigned = false;
       }
-      // Start despawn animation — keep character in map for rendering
-      ch.matrixEffect = 'despawn';
-      ch.matrixEffectTimer = 0;
-      ch.matrixEffectSeeds = matrixEffectSeeds();
-      ch.bubbleType = null;
+      this.characters.delete(id);
     }
-    // Clean up tracking maps immediately so keys don't collide
     this.subagentIdMap.delete(key);
     this.subagentMeta.delete(id);
     if (this.selectedAgentId === id) this.selectedAgentId = null;
@@ -481,21 +471,11 @@ export class OfficeState {
       if (meta && meta.parentAgentId === parentAgentId) {
         const ch = this.characters.get(id);
         if (ch) {
-          if (ch.matrixEffect === 'despawn') {
-            // Already despawning — just clean up maps
-            this.subagentMeta.delete(id);
-            toRemove.push(key);
-            continue;
-          }
           if (ch.seatId) {
             const seat = this.seats.get(ch.seatId);
             if (seat) seat.assigned = false;
           }
-          // Start despawn animation
-          ch.matrixEffect = 'despawn';
-          ch.matrixEffectTimer = 0;
-          ch.matrixEffectSeeds = matrixEffectSeeds();
-          ch.bubbleType = null;
+          this.characters.delete(id);
         }
         this.subagentMeta.delete(id);
         if (this.selectedAgentId === id) this.selectedAgentId = null;
@@ -672,25 +652,7 @@ export class OfficeState {
   }
 
   update(dt: number): void {
-    const toDelete: number[] = [];
     for (const ch of this.characters.values()) {
-      // Handle matrix effect animation
-      if (ch.matrixEffect) {
-        ch.matrixEffectTimer += dt;
-        if (ch.matrixEffectTimer >= MATRIX_EFFECT_DURATION) {
-          if (ch.matrixEffect === 'spawn') {
-            // Spawn complete — clear effect, resume normal FSM
-            ch.matrixEffect = null;
-            ch.matrixEffectTimer = 0;
-            ch.matrixEffectSeeds = [];
-          } else {
-            // Despawn complete — mark for deletion
-            toDelete.push(ch.id);
-          }
-        }
-        continue; // skip normal FSM while effect is active
-      }
-
       // Temporarily unblock own seat so character can pathfind to it
       this.withOwnSeatUnblocked(ch, () =>
         updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
@@ -705,10 +667,6 @@ export class OfficeState {
         }
       }
     }
-    // Remove characters that finished despawn
-    for (const id of toDelete) {
-      this.characters.delete(id);
-    }
   }
 
   getCharacters(): Character[] {
@@ -719,8 +677,6 @@ export class OfficeState {
   getCharacterAt(worldX: number, worldY: number): number | null {
     const chars = this.getCharacters().sort((a, b) => b.y - a.y);
     for (const ch of chars) {
-      // Skip characters that are despawning
-      if (ch.matrixEffect === 'despawn') continue;
       // Character sprite is 16x24, anchored bottom-center
       // Apply sitting offset to match visual position
       const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;

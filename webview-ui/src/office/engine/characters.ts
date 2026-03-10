@@ -105,6 +105,32 @@ export function updateCharacter(
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
       }
+      // Pokémon: free roam even when active — use wander timer to pick random destinations
+      if (ch.pokemonSpriteId) {
+        ch.wanderTimer -= dt;
+        if (ch.wanderTimer <= 0) {
+          ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
+          if (walkableTiles.length > 0) {
+            const target = walkableTiles[Math.floor(Math.random() * walkableTiles.length)];
+            const path = findPath(
+              ch.tileCol,
+              ch.tileRow,
+              target.col,
+              target.row,
+              tileMap,
+              blockedTiles,
+            );
+            if (path.length > 0) {
+              ch.path = path;
+              ch.moveProgress = 0;
+              ch.state = CharacterState.WALK;
+              ch.frame = 0;
+              ch.frameTimer = 0;
+            }
+          }
+        }
+        break;
+      }
       // If no longer active, stand up and start wandering (after seatTimer expires)
       if (!ch.isActive) {
         if (ch.seatTimer > 0) {
@@ -227,7 +253,11 @@ export function updateCharacter(
         ch.y = center.y;
 
         if (ch.isActive) {
-          if (!ch.seatId) {
+          // Pokémon: after walking, stay in IDLE for free roam (wander timer restarts)
+          if (ch.pokemonSpriteId) {
+            ch.state = CharacterState.IDLE;
+            ch.wanderTimer = randomRange(WANDER_PAUSE_MIN_SEC, WANDER_PAUSE_MAX_SEC);
+          } else if (!ch.seatId) {
             // No seat — type in place
             ch.state = CharacterState.TYPE;
           } else {

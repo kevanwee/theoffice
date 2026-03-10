@@ -181,6 +181,167 @@ This re-scans `Pokemon/` and `Pokemon Shiny/` and writes `webview-ui/public/asse
 
 ---
 
+## Architecture
+
+### System Overview
+
+The extension splits into two processes connected by `postMessage`. The extension host watches files and VS Code events; the webview renders the world on a Canvas at 60 fps.
+
+```mermaid
+graph TD
+    subgraph "VS Code Extension Host (Node.js)"
+        EXT["extension.ts\nactivate / deactivate"]
+        AM["agentManager.ts\nterminal lifecycle"]
+        FW["fileWatcher.ts\nfs.watch + 2 s polling"]
+        TP["transcriptParser.ts\nJSONL → messages"]
+        LP["layoutPersistence.ts\n~/.the-office/layout.json"]
+        AL["assetLoader.ts\nPNG → SpriteData"]
+    end
+
+    subgraph "Webview (React + Canvas)"
+        APP["App.tsx\ncomposition root"]
+        OS["OfficeState\ngame world (imperative)"]
+        GL["gameLoop.ts\nrAF 60 fps"]
+        RND["renderer.ts\nz-sorted Canvas draw"]
+        CHR["characters.ts\nFSM per Pokémon"]
+        ED["Layout Editor\neditorState + editorActions"]
+    end
+
+    VSCODE["VS Code API\nterminals · lm events · globalState"]
+    DISK[("~/.claude · ~/.codex\nJSONL session files")]
+
+    VSCODE --> EXT
+    EXT --> AM
+    AM --> FW
+    FW --> DISK
+    FW --> TP
+    TP -->|postMessage| APP
+    LP -->|layoutLoaded| APP
+    AL -->|spriteData + catalog| APP
+
+    APP --> OS
+    OS --> CHR
+    GL --> RND
+    RND --> OS
+    APP --> ED
+    ED -->|saveLayout| LP
+```
+
+---
+
+### Pokémon Character State Machine
+
+Each Pokémon is a finite-state machine. `isActive` (agent busy) and `pokemonSpriteId` (character type) are the main guards that change which transitions fire.
+
+```mermaid
+stateDiagram-v2
+    [*] --> TYPE : spawn (seat assigned)
+    [*] --> IDLE : spawn (no seat)
+
+    TYPE --> WALK : Pokémon wander timer fires\n(always roams, ignores active flag)
+    TYPE --> IDLE : agent turn ends → seatTimer expires
+    TYPE --> WALK : inactive, pathfind back to seat
+
+    IDLE --> WALK : wander timer fires → random tile
+    IDLE --> WALK : wanderCount ≥ wanderLimit → return to seat
+    IDLE --> WALK : agent becomes active → pathfind to seat
+
+    WALK --> TYPE : arrived at seat while active\n(non-Pokémon only)
+    WALK --> IDLE : path complete (Pokémon — free roam)
+    WALK --> IDLE : path complete (inactive)
+    WALK --> TYPE : arrived at seat while inactive → rest timer
+
+    note right of TYPE
+        Animation:
+        frames 0‑1 (type / read)
+        based on currentTool
+    end note
+
+    note right of IDLE
+        Animation:
+        slow bob frames 0‑1
+    end note
+
+    note right of WALK
+        Animation:
+        4-frame walk cycle
+        direction from path
+    end note
+```
+
+---
+
+### Data Flow — JSONL to Animation
+
+```mermaid
+sequenceDiagram
+    participant CLI as Claude / Codex CLI
+    participant JSONL as Session JSONL file
+    participant FW as fileWatcher.ts
+    participant TP as transcriptParser.ts
+    participant WV as Webview (postMessage)
+    participant OS as OfficeState
+    participant CH as Character FSM
+
+    CLI->>JSONL: append record (streaming)
+    FW->>JSONL: readNewLines (fs.watch + 2 s poll)
+    FW->>TP: new line(s)
+
+    alt tool_use block
+        TP->>WV: agentToolStart {tool, id}
+        WV->>OS: setAgentActive(true)
+        OS->>CH: isActive = true → walk to seat
+    end
+
+    alt tool_result block
+        TP->>WV: agentToolDone {id} (300 ms delay)
+    end
+
+    alt system subtype=turn_duration
+        TP->>WV: agentStatus {status: "waiting"}
+        WV->>OS: showWaitingBubble + sound chime
+        OS->>CH: isActive = false → enter IDLE / wander
+    end
+
+    alt progress data.type=agent_progress (sub-agent)
+        TP->>WV: agentToolStart (negative id)
+        WV->>OS: addSubagent → new Character
+        OS->>CH: spawns near parent, starts FSM
+    end
+```
+
+---
+
+### Rendering Pipeline
+
+Every frame the renderer z-sorts all drawables (tiles → furniture → wall instances → characters → bubbles) so entities overlap correctly without a separate depth buffer.
+
+```mermaid
+flowchart LR
+    subgraph "Per-frame (rAF)"
+        A["update(dt)\nadvance all FSMs"] --> B["renderFrame()"]
+        B --> C["renderTileGrid\nfloor + wall base"]
+        C --> D["collect ZDrawable[]\nfurniture + walls + chars"]
+        D --> E["sort by zY"]
+        E --> F["draw in order\nCanvas 2D drawImage"]
+        F --> G["overlays\nbubbles · seats · editor UI"]
+    end
+
+    subgraph "Sprite cache"
+        SC["SpriteData → OffscreenCanvas\nWeakMap keyed by zoom"]
+    end
+
+    subgraph "Pokémon sheets"
+        PS["256×256 PNG sheet\n4 cols × 4 rows\n64 px per frame"]
+        PS --> |"frameSize = naturalWidth/4\nscale ∝ frameSize/64"| F
+    end
+
+    F --> SC
+    SC --> F
+```
+
+---
+
 ## Stack
 
 | Layer | Tech |

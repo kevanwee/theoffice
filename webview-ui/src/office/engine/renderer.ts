@@ -53,7 +53,6 @@ import type {
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
 import { getCharacterSprite } from './characters.js';
-import { renderMatrixEffect } from './matrixEffect.js';
 
 // ── Render functions ────────────────────────────────────────────
 
@@ -149,27 +148,6 @@ export function renderScene(
     // at lower rows (e.g. desks, bookshelves that occlude from below).
     const charZY = ch.y + TILE_SIZE / 2 + CHARACTER_Z_SORT_OFFSET;
 
-    // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
-    if (ch.matrixEffect) {
-      const isPokemon = !!ch.pokemonSpriteId;
-      // For Pokémon characters: use empty spriteData (pure green rain, no human pixel reveal)
-      // and compute draw position + grid size from POKEMON_DRAW_SIZE
-      const mSpriteData: SpriteData = isPokemon ? [] : spriteData;
-      const drawW = isPokemon ? POKEMON_DRAW_SIZE * zoom : cached.width;
-      const drawH = isPokemon ? POKEMON_DRAW_SIZE * zoom : cached.height;
-      const mDrawX = Math.round(offsetX + ch.x * zoom - drawW / 2);
-      const mDrawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - drawH);
-      const gridSize = isPokemon ? POKEMON_DRAW_SIZE : undefined;
-      const mCh = ch;
-      drawables.push({
-        zY: charZY,
-        draw: (c) => {
-          renderMatrixEffect(c, mCh, mSpriteData, mDrawX, mDrawY, zoom, gridSize, gridSize);
-        },
-      });
-      continue;
-    }
-
     // ── Pokémon sprite-sheet rendering ──────────────────────────────────────
     if (ch.pokemonSpriteId) {
       const url = ch.pokemonIsShiny
@@ -188,10 +166,12 @@ export function renderScene(
                 : ch.frame % 2; // IDLE: slow bob between frame 0 and 1
           // Row = direction: DOWN=0, LEFT=1, RIGHT=2, UP=3
           const frameRow = ch.dir;
-          const sx = frameCol * POKEMON_SHEET_FRAME_SIZE;
-          const sy = frameRow * POKEMON_SHEET_FRAME_SIZE;
-          const drawW = POKEMON_DRAW_SIZE * zoom;
-          const drawH = POKEMON_DRAW_SIZE * zoom;
+          const frameSize = sheet.naturalWidth / 4;
+          const sx = frameCol * frameSize;
+          const sy = frameRow * frameSize;
+          const rawDraw = Math.round((frameSize / POKEMON_SHEET_FRAME_SIZE) * POKEMON_DRAW_SIZE);
+          const drawW = rawDraw * zoom;
+          const drawH = rawDraw * zoom;
           const pDrawX = Math.round(offsetX + ch.x * zoom - drawW / 2);
           const pDrawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - drawH);
 
@@ -223,8 +203,8 @@ export function renderScene(
                 capturedSheet,
                 sx,
                 sy,
-                POKEMON_SHEET_FRAME_SIZE,
-                POKEMON_SHEET_FRAME_SIZE,
+                frameSize,
+                frameSize,
                 pDrawX,
                 pDrawY,
                 drawW,

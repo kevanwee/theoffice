@@ -103,6 +103,10 @@ export function OfficeCanvas({
   const isEraseDraggingRef = useRef(false);
   // Zoom scroll accumulator for trackpad pinch sensitivity
   const zoomAccumulatorRef = useRef(0);
+  // Pokémon drag-and-drop state
+  const pokemonDragIdRef = useRef<number | null>(null);
+  const pokemonDragMovedRef = useRef(false);
+  const pokemonJustDroppedRef = useRef(false);
 
   // Scene background image (loaded when active theme/scene changes)
   const { activeTheme, activeSceneId } = useTheme();
@@ -513,6 +517,19 @@ export function OfficeCanvas({
 
       const pos = screenToWorld(e.clientX, e.clientY);
       if (!pos) return;
+
+      // Pokémon drag: move character visually with mouse
+      if (pokemonDragIdRef.current !== null) {
+        const dragCh = officeState.characters.get(pokemonDragIdRef.current);
+        if (dragCh) {
+          dragCh.x = pos.worldX;
+          dragCh.y = pos.worldY;
+          dragCh.path = [];
+          pokemonDragMovedRef.current = true;
+        }
+        return;
+      }
+
       const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY);
       const tile = screenToTile(e.clientX, e.clientY);
       officeState.hoveredTile = tile;
@@ -591,7 +608,27 @@ export function OfficeCanvas({
         return;
       }
 
-      if (!isEditMode) return;
+      if (!isEditMode) {
+        // Left-click on a Pokémon character starts drag
+        if (e.button === 0) {
+          const pos = screenToWorld(e.clientX, e.clientY);
+          if (pos) {
+            const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY);
+            if (hitId !== null) {
+              const hitCh = officeState.characters.get(hitId);
+              if (hitCh?.pokemonSpriteId) {
+                pokemonDragIdRef.current = hitId;
+                pokemonDragMovedRef.current = false;
+                const canvas = canvasRef.current;
+                if (canvas) canvas.style.cursor = 'grabbing';
+                e.preventDefault();
+                return;
+              }
+            }
+          }
+        }
+        return;
+      }
 
       // Check rotate/delete button hit first
       const pos = screenToWorld(e.clientX, e.clientY);
@@ -669,6 +706,39 @@ export function OfficeCanvas({
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
+      // Pokémon drag-and-drop: snap to nearest walkable tile on left-button release
+      if (e.button === 0 && pokemonDragIdRef.current !== null) {
+        const dragId = pokemonDragIdRef.current;
+        pokemonDragIdRef.current = null;
+        const canvas = canvasRef.current;
+        if (canvas) canvas.style.cursor = 'default';
+        if (pokemonDragMovedRef.current) {
+          const pos = screenToWorld(e.clientX, e.clientY);
+          const dragCh = officeState.characters.get(dragId);
+          if (pos && dragCh) {
+            // Find nearest walkable tile to drop position
+            const targetCol = Math.round((pos.worldX - TILE_SIZE / 2) / TILE_SIZE);
+            const targetRow = Math.round((pos.worldY - TILE_SIZE / 2) / TILE_SIZE);
+            const walkable = officeState.walkableTiles;
+            let bestCol = targetCol;
+            let bestRow = targetRow;
+            let bestDist = Infinity;
+            for (const t of walkable) {
+              const d = Math.abs(t.col - targetCol) + Math.abs(t.row - targetRow);
+              if (d < bestDist) {
+                bestDist = d;
+                bestCol = t.col;
+                bestRow = t.row;
+              }
+            }
+            officeState.teleportCharacter(dragId, bestCol, bestRow);
+          }
+          pokemonJustDroppedRef.current = true;
+        }
+        pokemonDragMovedRef.current = false;
+        return;
+      }
+
       if (e.button === 1) {
         isPanningRef.current = false;
         const canvas = canvasRef.current;
@@ -720,12 +790,17 @@ export function OfficeCanvas({
       editorState.isDragging = false;
       editorState.wallDragAdding = null;
     },
-    [editorState, isEditMode, officeState, onDragMove, onEditorSelectionChange],
+    [editorState, isEditMode, officeState, onDragMove, onEditorSelectionChange, screenToWorld],
   );
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (isEditMode) return; // handled by mouseDown/mouseUp
+      // Suppress click after a Pokémon drag-and-drop
+      if (pokemonJustDroppedRef.current) {
+        pokemonJustDroppedRef.current = false;
+        return;
+      }
       const pos = screenToWorld(e.clientX, e.clientY);
       if (!pos) return;
 
@@ -791,6 +866,9 @@ export function OfficeCanvas({
   const handleMouseLeave = useCallback(() => {
     isPanningRef.current = false;
     isEraseDraggingRef.current = false;
+    pokemonDragIdRef.current = null;
+    pokemonDragMovedRef.current = false;
+    pokemonJustDroppedRef.current = false;
     editorState.isDragging = false;
     editorState.wallDragAdding = null;
     editorState.clearDrag();
