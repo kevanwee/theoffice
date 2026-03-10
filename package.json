@@ -1,0 +1,129 @@
+{
+  "name": "theoffice",
+  "displayName": "The Office",
+  "description": "Pokémon-themed pixel office where your AI agents (Claude, Copilot, Codex) come to life as animated characters",
+  "version": "0.1.0",
+  "publisher": "kevanwee",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kevanwee/theoffice"
+  },
+  "icon": "icon.png",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.107.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "theoffice.showPanel",
+        "title": "The Office: Show Panel"
+      },
+      {
+        "command": "theoffice.exportDefaultLayout",
+        "title": "The Office: Export Layout as Default"
+      },
+      {
+        "command": "theoffice.openCharacterPicker",
+        "title": "The Office: Pick Character for Active Agent"
+      },
+      {
+        "command": "theoffice.switchScene",
+        "title": "The Office: Switch Scene"
+      }
+    ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "theoffice-panel",
+          "title": "The Office",
+          "icon": "$(window)"
+        }
+      ]
+    },
+    "views": {
+      "theoffice-panel": [
+        {
+          "type": "webview",
+          "id": "theoffice.panelView",
+          "name": "The Office"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "The Office",
+      "properties": {
+        "theoffice.soundEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable sound notifications when agents complete tasks"
+        },
+        "theoffice.defaultBackend": {
+          "type": "string",
+          "enum": ["claude", "copilot", "codex"],
+          "default": "claude",
+          "description": "Default AI backend for new agents"
+        },
+        "theoffice.activeTheme": {
+          "type": "string",
+          "default": "pokemon",
+          "description": "Active theme pack ID"
+        },
+        "theoffice.activeScene": {
+          "type": "string",
+          "default": "pallet-town",
+          "description": "Active scene ID within the current theme"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "build:webview": "cd webview-ui && npm run build",
+    "build:pokemon-catalog": "tsx scripts/build-pokemon-catalog.ts",
+    "compile": "npm run check-types && npm run lint && node esbuild.js && npm run build:webview",
+    "build": "npm run compile",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production && npm run build:webview",
+    "check-types": "tsc --noEmit",
+    "prepare": "husky",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "lint:webview": "cd webview-ui && npm run lint",
+    "lint:webview:fix": "cd webview-ui && eslint . --fix",
+    "import-tileset": "tsx scripts/import-tileset-cli.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"webview-ui/src/**/*.{ts,tsx,css}\" \"*.{js,mjs}\" \"webview-ui/*.{js,ts}\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"webview-ui/src/**/*.{ts,tsx,css}\" \"*.{js,mjs}\" \"webview-ui/*.{js,ts}\""
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@types/node": "22.x",
+    "@types/pngjs": "^6.0.5",
+    "@types/vscode": "^1.107.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.2",
+    "npm-run-all": "^4.1.5",
+    "pngjs": "^7.0.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
+  },
+  "lint-staged": {
+    "src/**/*.ts": "eslint --fix",
+    "webview-ui/src/**/*.{ts,tsx}": "eslint --fix",
+    "*.{ts,tsx,js,mjs,css,json,md}": "prettier --write",
+    "webview-ui/**/*.{ts,tsx,js,css,json}": "prettier --write"
+  }
+}
