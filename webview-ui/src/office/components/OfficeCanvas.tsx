@@ -28,31 +28,58 @@ import { useTheme } from '../../themes/ThemeContext.js';
 
 /**
  * Analyse a scene image to produce a walkability tile map.
- * Scales the image down to (cols × rows) and classifies each pixel:
- *  • very dark (luminance < 55) → WALL (trees, building shadows, dark borders)
- *  • blue-dominant (likely water or rooftops) → WALL
- *  • everything else → FLOOR_1 (walkable)
- * Returns a flat array of TileTypeVal values, row-major.
+ *
+ * Samples each tile at a 4×4 sub-pixel grid (16 samples/tile) by scaling the
+ * image to 4× the tile resolution first, then classifying each sample with
+ * colour rules tuned to the LeoB ORAS pixel-art palette:
+ *
+ *  • Very dark  (lum < 65)                               → WALL  (outlines, deep tree shadow)
+ *  • Tree canopy (R < G×0.35, G > 60, lum < 135)        → WALL  (dark saturated green)
+ *  • Water       (B > R+30 && B > G+15 && lum < 165)    → WALL  (ponds, rivers)
+ *  • Red rooftop (R > G×2.5 && R > B×2.5 && lum < 140) → WALL  (Pokémon Center, buildings)
+ *  • Else                                                → FLOOR (paths, grass, plazas)
+ *
+ * A tile is marked WALL when ≥ 30 % of its 16 samples are obstacle-coloured.
  */
 function analyzeSceneCollision(img: HTMLImageElement, cols: number, rows: number): TileTypeVal[] {
+  const SAMPLES = 4; // 4×4 sub-pixels per tile
+  const W = cols * SAMPLES;
+  const H = rows * SAMPLES;
   const offscreen = document.createElement('canvas');
-  offscreen.width = cols;
-  offscreen.height = rows;
+  offscreen.width = W;
+  offscreen.height = H;
   const ctx2d = offscreen.getContext('2d');
   if (!ctx2d) return new Array(cols * rows).fill(TileType.FLOOR_1) as TileTypeVal[];
-  ctx2d.drawImage(img, 0, 0, cols, rows);
-  const { data } = ctx2d.getImageData(0, 0, cols, rows);
-  const tiles: TileTypeVal[] = [];
-  for (let i = 0; i < cols * rows; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
+  // Scale the scene image to the super-sampled resolution. The browser's
+  // bilinear downscaling averages source pixels, giving us area-representative
+  // colour samples for free.
+  ctx2d.drawImage(img, 0, 0, W, H);
+  const { data } = ctx2d.getImageData(0, 0, W, H);
+
+  function isObstacle(r: number, g: number, b: number): boolean {
     const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    // Very dark: tree canopy, building walls, mountain shadows
-    const veryDark = lum < 55;
-    // Blue-dominated: ponds, rooftop highlights, deep shadows
-    const blueDominated = b > r + 30 && b > g + 15 && lum < 130;
-    tiles.push(veryDark || blueDominated ? TileType.WALL : TileType.FLOOR_1);
+    if (lum < 65) return true; // dark outlines / shadows
+    if (g > 60 && r < g * 0.35 && lum < 135) return true; // tree canopy (low R:G ratio)
+    if (b > r + 30 && b > g + 15 && lum < 165) return true; // water / ponds
+    if (r > g * 2.5 && r > b * 2.5 && lum < 140) return true; // red rooftops
+    return false;
+  }
+
+  const THRESHOLD = Math.ceil(SAMPLES * SAMPLES * 0.3); // ≥30 % → WALL
+  const tiles: TileTypeVal[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      let wallCount = 0;
+      for (let sy = 0; sy < SAMPLES; sy++) {
+        for (let sx = 0; sx < SAMPLES; sx++) {
+          const px = col * SAMPLES + sx;
+          const py = row * SAMPLES + sy;
+          const idx = (py * W + px) * 4;
+          if (isObstacle(data[idx], data[idx + 1], data[idx + 2])) wallCount++;
+        }
+      }
+      tiles.push(wallCount >= THRESHOLD ? TileType.WALL : TileType.FLOOR_1);
+    }
   }
   return tiles;
 }
