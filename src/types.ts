@@ -4,7 +4,9 @@ import type { BackendType } from './agentAdapters/IAgentAdapter.js';
 
 export interface AgentState {
   id: number;
-  terminalRef: vscode.Terminal;
+  terminalRef?: vscode.Terminal;
+  /** Disposable watcher returned by a non-terminal adapter (e.g. CopilotAdapter) */
+  copilotWatcher?: vscode.Disposable;
   projectDir: string;
   jsonlFile: string;
   fileOffset: number;

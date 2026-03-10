@@ -182,12 +182,15 @@ export function persistAgents(
 ): void {
   const persisted: PersistedAgent[] = [];
   for (const agent of agents.values()) {
+    if (!agent.terminalRef) continue; // Copilot/non-terminal agents are not persisted
     persisted.push({
       id: agent.id,
       terminalName: agent.terminalRef.name,
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
       folderName: agent.folderName,
+      characterId: agent.characterId,
+      isShiny: agent.isShiny,
     });
   }
   context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
@@ -238,6 +241,8 @@ export function restoreAgents(
       hadToolsInTurn: false,
       folderName: p.folderName,
       backendType: p.backendType ?? 'claude',
+      characterId: p.characterId,
+      isShiny: p.isShiny,
     };
 
     agents.set(p.id, agent);
@@ -359,11 +364,24 @@ export function sendExistingAgents(
     `[Pixel Agents] sendExistingAgents: agents=${JSON.stringify(agentIds)}, meta=${JSON.stringify(agentMeta)}`,
   );
 
+  // Include character assignments for restored agents so the webview can
+  // re-apply Pokemon sprites without the user having to re-pick them.
+  const characterAssignments: Record<number, { characterId: string; isShiny: boolean }> = {};
+  for (const [id, agent] of agents) {
+    if (agent.characterId) {
+      characterAssignments[id] = {
+        characterId: agent.characterId,
+        isShiny: agent.isShiny ?? false,
+      };
+    }
+  }
+
   webview.postMessage({
     type: 'existingAgents',
     agents: agentIds,
     agentMeta,
     folderNames,
+    characterAssignments,
   });
 
   sendCurrentAgentStatuses(agents, webview);

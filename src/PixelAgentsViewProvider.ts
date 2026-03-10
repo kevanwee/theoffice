@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { CopilotAdapter } from './agentAdapters/CopilotAdapter.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -90,31 +91,53 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.type === 'openClaude') {
-        await launchNewTerminal(
-          this.nextAgentId,
-          this.nextTerminalIndex,
-          this.agents,
-          this.activeAgentId,
-          this.knownJsonlFiles,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-          this.jsonlPollTimers,
-          this.projectScanTimer,
-          this.webview,
-          this.persistAgents,
-          message.folderPath as string | undefined,
-        );
+        const backend = (message.backend as string | undefined) ?? 'claude';
+        if (backend === 'copilot') {
+          await this.launchCopilotAgent(message.folderPath as string | undefined);
+        } else {
+          await launchNewTerminal(
+            this.nextAgentId,
+            this.nextTerminalIndex,
+            this.agents,
+            this.activeAgentId,
+            this.knownJsonlFiles,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            this.jsonlPollTimers,
+            this.projectScanTimer,
+            this.webview,
+            this.persistAgents,
+            message.folderPath as string | undefined,
+          );
+        }
       } else if (message.type === 'focusAgent') {
         const agent = this.agents.get(message.id);
         if (agent) {
-          agent.terminalRef.show();
+          agent.terminalRef?.show();
         }
       } else if (message.type === 'closeAgent') {
-        const agent = this.agents.get(message.id);
+        const closeId = message.id as number;
+        const agent = this.agents.get(closeId);
         if (agent) {
-          agent.terminalRef.dispose();
+          agent.copilotWatcher?.dispose();
+          agent.terminalRef?.dispose();
+          // For non-terminal agents (e.g. Copilot), no onDidCloseTerminal fires,
+          // so we must clean up and notify the webview manually.
+          if (!agent.terminalRef) {
+            removeAgent(
+              closeId,
+              this.agents,
+              this.fileWatchers,
+              this.pollingTimers,
+              this.waitingTimers,
+              this.permissionTimers,
+              this.jsonlPollTimers,
+              this.persistAgents,
+            );
+            webviewView.webview.postMessage({ type: 'agentClosed', id: closeId });
+          }
         }
       } else if (message.type === 'saveAgentSeats') {
         // Store seat assignments in a separate key (never touched by persistAgents)
@@ -163,19 +186,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const soundEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_SOUND_ENABLED, true);
         this.webview?.postMessage({ type: 'settingsLoaded', soundEnabled });
 
-        // Send Pokemon sprite base URIs so webview can load sprites directly
-        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (wsRoot && this.webview) {
-          const pokemonDir = vscode.Uri.joinPath(wsRoot, 'Pokemon');
+        // Send Pokemon sprite base URIs so webview can load sprites directly.
+        // Always resolve relative to the extension directory (works when installed anywhere).
+        if (this.webview) {
+          const pokemonDir = vscode.Uri.joinPath(this.extensionUri, 'Pokemon');
           const pokemonBaseUri = this.webview.asWebviewUri(pokemonDir).toString();
           this.webview.postMessage({ type: 'pokemonBaseUri', uri: pokemonBaseUri });
 
-          const pokemonShinyDir = vscode.Uri.joinPath(wsRoot, 'Pokemon Shiny');
+          const pokemonShinyDir = vscode.Uri.joinPath(this.extensionUri, 'Pokemon Shiny');
           const pokemonShinyBaseUri = this.webview.asWebviewUri(pokemonShinyDir).toString();
           this.webview.postMessage({ type: 'pokemonShinyBaseUri', uri: pokemonShinyBaseUri });
 
           // Load and send the theme pack (theme.json + catalog.json)
-          this.sendThemePack(this.webview, wsRoot.fsPath);
+          this.sendThemePack(this.webview, this.extensionUri.fsPath);
         }
 
         // Send workspace folders to webview (only when multi-root)
@@ -355,7 +378,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       this.activeAgentId.current = null;
       if (!terminal) return;
       for (const [id, agent] of this.agents) {
-        if (agent.terminalRef === terminal) {
+        if (agent.terminalRef && agent.terminalRef === terminal) {
           this.activeAgentId.current = id;
           webviewView.webview.postMessage({ type: 'agentSelected', id });
           break;
@@ -365,7 +388,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
     vscode.window.onDidCloseTerminal((closed) => {
       for (const [id, agent] of this.agents) {
-        if (agent.terminalRef === closed) {
+        if (agent.terminalRef && agent.terminalRef === closed) {
           if (this.activeAgentId.current === id) {
             this.activeAgentId.current = null;
           }
@@ -454,8 +477,73 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
    * Load the Pokémon ThemePack (theme.json + catalog.json) and send it to the
    * webview so it can populate ThemeRegistry.
    */
-  private sendThemePack(webview: vscode.Webview, wsRoot: string): void {
-    const themeRoot = path.join(wsRoot, 'webview-ui', 'public', 'assets', 'themes', 'pokemon');
+  private async launchCopilotAgent(folderPath: string | undefined): Promise<void> {
+    const adapter = new CopilotAdapter();
+    const agentId = this.nextAgentId.current++;
+    const folderName = folderPath ? path.basename(folderPath) : undefined;
+
+    const agent: AgentState = {
+      id: agentId,
+      projectDir: folderPath ?? '',
+      jsonlFile: '',
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      folderName,
+      backendType: 'copilot',
+    };
+
+    this.agents.set(agentId, agent);
+    this.activeAgentId.current = agentId;
+    this.webview?.postMessage({ type: 'agentCreated', id: agentId, folderName });
+
+    // Launch the adapter (opens Copilot Chat panel)
+    const handle = await adapter.launchAgent(folderPath, agentId, 0);
+
+    // Watch for events and forward them to the webview
+    const watcher = adapter.watchAgent(handle, (event) => {
+      const webview = this.webview;
+      if (!webview) return;
+      if (event.kind === 'tool_start') {
+        agent.activeToolIds.add(event.toolId);
+        agent.activeToolStatuses.set(event.toolId, event.statusText);
+        agent.activeToolNames.set(event.toolId, event.toolName);
+        webview.postMessage({
+          type: 'agentToolStart',
+          id: agentId,
+          toolId: event.toolId,
+          status: event.statusText,
+        });
+      } else if (event.kind === 'tool_end') {
+        agent.activeToolIds.delete(event.toolId);
+        agent.activeToolStatuses.delete(event.toolId);
+        agent.activeToolNames.delete(event.toolId);
+        webview.postMessage({ type: 'agentToolDone', id: agentId, toolId: event.toolId });
+      } else if (event.kind === 'waiting') {
+        agent.isWaiting = true;
+        webview.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
+      } else if (event.kind === 'completed') {
+        agent.isWaiting = false;
+        agent.activeToolIds.clear();
+        agent.activeToolStatuses.clear();
+        agent.activeToolNames.clear();
+        webview.postMessage({ type: 'agentToolsClear', id: agentId });
+      }
+    });
+
+    agent.copilotWatcher = watcher;
+  }
+
+  private sendThemePack(webview: vscode.Webview, extRoot: string): void {
+    // Assets are copied to dist/assets/ at build time — works both in dev and installed.
+    const themeRoot = path.join(extRoot, 'dist', 'assets', 'themes', 'pokemon');
     const themeJsonPath = path.join(themeRoot, 'theme.json');
     const catalogPath = path.join(themeRoot, 'catalog.json');
 
@@ -472,6 +560,23 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
         if (Array.isArray(catalog.characters)) {
           theme.characters = catalog.characters;
+        }
+      }
+
+      // Rewrite sceneImageFile paths to full webview URIs so the webview can load
+      // them directly as <img> sources without needing a separate fetch.
+      for (const scene of (theme.scenes ?? []) as Array<{ sceneImageFile?: string }>) {
+        if (scene.sceneImageFile) {
+          const parts = scene.sceneImageFile.split('/');
+          const fileUri = vscode.Uri.joinPath(
+            this.extensionUri,
+            'dist',
+            'assets',
+            'themes',
+            'pokemon',
+            ...parts,
+          );
+          scene.sceneImageFile = webview.asWebviewUri(fileUri).toString();
         }
       }
 
