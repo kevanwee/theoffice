@@ -11,8 +11,9 @@ export const MAX_ROWS = 64;
 export const WALK_SPEED_PX_PER_SEC = 48;
 export const WALK_FRAME_DURATION_SEC = 0.15;
 export const TYPE_FRAME_DURATION_SEC = 0.3;
-export const WANDER_PAUSE_MIN_SEC = 2.0;
-export const WANDER_PAUSE_MAX_SEC = 20.0;
+export const IDLE_FRAME_DURATION_SEC = 0.45;
+export const WANDER_PAUSE_MIN_SEC = 0.5;
+export const WANDER_PAUSE_MAX_SEC = 4.0;
 export const WANDER_MOVES_BEFORE_REST_MIN = 3;
 export const WANDER_MOVES_BEFORE_REST_MAX = 6;
 export const SEAT_REST_MIN_SEC = 120.0;
@@ -95,6 +96,12 @@ export const NOTIFICATION_NOTE_1_START_SEC = 0;
 export const NOTIFICATION_NOTE_2_START_SEC = 0.1;
 export const NOTIFICATION_NOTE_DURATION_SEC = 0.18;
 export const NOTIFICATION_VOLUME = 0.14;
+
+// ── Pokemon Sprite Sheets ────────────────────────────────────
+/** Source frame size in the 256×256 sprite sheet (4 rows × 4 cols = 64px each) */
+export const POKEMON_SHEET_FRAME_SIZE = 64;
+/** Draw size in sprite pixels at zoom=1 (2 tiles × 2 tiles = 32px) */
+export const POKEMON_DRAW_SIZE = TILE_SIZE * 2;
 
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1;

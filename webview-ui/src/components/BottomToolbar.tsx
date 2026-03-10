@@ -6,7 +6,6 @@ import { SettingsModal } from './SettingsModal.js';
 
 interface BottomToolbarProps {
   isEditMode: boolean;
-  onOpenClaude: () => void;
   onToggleEditMode: () => void;
   isDebugMode: boolean;
   onToggleDebugMode: () => void;
@@ -48,7 +47,6 @@ const btnActive: React.CSSProperties = {
 
 export function BottomToolbar({
   isEditMode,
-  onOpenClaude,
   onToggleEditMode,
   isDebugMode,
   onToggleDebugMode,
@@ -60,7 +58,10 @@ export function BottomToolbar({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [hoveredFolder, setHoveredFolder] = useState<number | null>(null);
+  const [backend, setBackend] = useState<'claude' | 'copilot'>('claude');
+  const [isBackendPickerOpen, setIsBackendPickerOpen] = useState(false);
   const folderPickerRef = useRef<HTMLDivElement>(null);
+  const backendPickerRef = useRef<HTMLDivElement>(null);
 
   // Close folder picker on outside click
   useEffect(() => {
@@ -74,23 +75,92 @@ export function BottomToolbar({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [isFolderPickerOpen]);
 
+  // Close backend picker on outside click
+  useEffect(() => {
+    if (!isBackendPickerOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (backendPickerRef.current && !backendPickerRef.current.contains(e.target as Node)) {
+        setIsBackendPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [isBackendPickerOpen]);
+
   const hasMultipleFolders = workspaceFolders.length > 1;
 
   const handleAgentClick = () => {
     if (hasMultipleFolders) {
       setIsFolderPickerOpen((v) => !v);
     } else {
-      onOpenClaude();
+      vscode.postMessage({ type: 'openClaude', backend });
     }
   };
 
   const handleFolderSelect = (folder: WorkspaceFolder) => {
     setIsFolderPickerOpen(false);
-    vscode.postMessage({ type: 'openClaude', folderPath: folder.path });
+    vscode.postMessage({ type: 'openClaude', folderPath: folder.path, backend });
   };
 
   return (
     <div style={panelStyle}>
+      {/* Backend selector — small ▾ button showing Claude/Copilot */}
+      <div ref={backendPickerRef} style={{ position: 'relative' }}>
+        <button
+          onClick={() => setIsBackendPickerOpen((v) => !v)}
+          title={`Backend: ${backend}`}
+          style={{
+            ...btnBase,
+            padding: '5px 7px',
+            fontSize: '18px',
+            background: isBackendPickerOpen ? 'var(--pixel-active-bg)' : 'var(--pixel-btn-bg)',
+            border: isBackendPickerOpen ? '2px solid var(--pixel-accent)' : '2px solid transparent',
+          }}
+        >
+          {backend === 'copilot' ? '🤖' : '🧠'}
+        </button>
+        {isBackendPickerOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              left: 0,
+              marginBottom: 4,
+              background: 'var(--pixel-bg)',
+              border: '2px solid var(--pixel-border)',
+              borderRadius: 0,
+              boxShadow: 'var(--pixel-shadow)',
+              minWidth: 130,
+              zIndex: 'var(--pixel-controls-z)',
+            }}
+          >
+            {(['claude', 'copilot'] as const).map((b) => (
+              <button
+                key={b}
+                onClick={() => {
+                  setBackend(b);
+                  setIsBackendPickerOpen(false);
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  fontSize: '20px',
+                  color: b === backend ? 'var(--pixel-accent)' : 'var(--pixel-text)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 0,
+                  cursor: 'pointer',
+                  fontWeight: b === backend ? 'bold' : 'normal',
+                }}
+              >
+                {b === 'copilot' ? '🤖 Copilot' : '🧠 Claude'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <div ref={folderPickerRef} style={{ position: 'relative' }}>
         <button
           onClick={handleAgentClick}

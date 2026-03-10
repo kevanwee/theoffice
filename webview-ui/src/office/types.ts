@@ -195,4 +195,11 @@ export interface Character {
   matrixEffectSeeds: number[];
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /**
+   * Pokémon sprite-sheet filename (e.g. "AEGISLASH.png") used instead of the
+   * default pixel-art sprite.  Null means use the normal palette-based sprite.
+   */
+  pokemonSpriteId: string | null;
+  /** When true, load from the "Pokémon Shiny" folder instead of "Pokémon". */
+  pokemonIsShiny: boolean;
 }
