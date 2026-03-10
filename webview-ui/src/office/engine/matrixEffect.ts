@@ -34,6 +34,7 @@ export { generateSeeds as matrixEffectSeeds };
 /**
  * Render a character with a Matrix-style digital rain spawn/despawn effect.
  * Per-pixel rendering: each column sweeps top-to-bottom with a bright head and fading green trail.
+ * gridCols/gridRows override the default sprite dimensions (for non-human characters like Pokémon).
  */
 export function renderMatrixEffect(
   ctx: CanvasRenderingContext2D,
@@ -42,13 +43,17 @@ export function renderMatrixEffect(
   drawX: number,
   drawY: number,
   zoom: number,
+  gridCols?: number,
+  gridRows?: number,
 ): void {
+  const COLS = gridCols ?? MATRIX_SPRITE_COLS;
+  const ROWS = gridRows ?? MATRIX_SPRITE_ROWS;
   const progress = ch.matrixEffectTimer / MATRIX_EFFECT_DURATION;
   const isSpawn = ch.matrixEffect === 'spawn';
   const time = ch.matrixEffectTimer;
-  const totalSweep = MATRIX_SPRITE_ROWS + MATRIX_TRAIL_LENGTH;
+  const totalSweep = ROWS + MATRIX_TRAIL_LENGTH;
 
-  for (let col = 0; col < MATRIX_SPRITE_COLS; col++) {
+  for (let col = 0; col < COLS; col++) {
     // Stagger: each column starts at a slightly different time
     const stagger = (ch.matrixEffectSeeds[col] ?? 0) * MATRIX_COLUMN_STAGGER_RANGE;
     const colProgress = Math.max(
@@ -57,7 +62,7 @@ export function renderMatrixEffect(
     );
     const headRow = colProgress * totalSweep;
 
-    for (let row = 0; row < MATRIX_SPRITE_ROWS; row++) {
+    for (let row = 0; row < ROWS; row++) {
       const pixel = spriteData[row]?.[col];
       const hasPixel = pixel && pixel !== '';
       const distFromHead = headRow - row;

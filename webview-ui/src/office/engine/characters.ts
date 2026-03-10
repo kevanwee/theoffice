@@ -1,4 +1,5 @@
 import {
+  IDLE_FRAME_DURATION_SEC,
   SEAT_REST_MAX_SEC,
   SEAT_REST_MIN_SEC,
   TYPE_FRAME_DURATION_SEC,
@@ -83,6 +84,8 @@ export function createCharacter(
     matrixEffect: null,
     matrixEffectTimer: 0,
     matrixEffectSeeds: [],
+    pokemonSpriteId: null,
+    pokemonIsShiny: false,
   };
 }
 
@@ -120,8 +123,11 @@ export function updateCharacter(
     }
 
     case CharacterState.IDLE: {
-      // No idle animation — static pose
-      ch.frame = 0;
+      // Slow idle bob animation
+      if (ch.frameTimer >= IDLE_FRAME_DURATION_SEC) {
+        ch.frameTimer -= IDLE_FRAME_DURATION_SEC;
+        ch.frame = (ch.frame + 1) % 2;
+      }
       if (ch.seatTimer < 0) ch.seatTimer = 0; // clear turn-end sentinel
       // If became active, pathfind to seat
       if (ch.isActive) {

@@ -21,6 +21,8 @@ import {
   GRID_LINE_COLOR,
   HOVERED_OUTLINE_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
+  POKEMON_DRAW_SIZE,
+  POKEMON_SHEET_FRAME_SIZE,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
   SEAT_BUSY_COLOR,
@@ -32,6 +34,8 @@ import {
   VOID_TILE_OUTLINE_COLOR,
 } from '../../constants.js';
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js';
+import { getOrLoadSheet } from '../sprites/pokemonSheetLoader.js';
+import { getPokemonShinySpriteUri, getPokemonSpriteUri } from '../sprites/pokemonUriStore.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
   BUBBLE_PERMISSION_SPRITE,
@@ -147,18 +151,93 @@ export function renderScene(
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {
-      const mDrawX = drawX;
-      const mDrawY = drawY;
-      const mSpriteData = spriteData;
+      const isPokemon = !!ch.pokemonSpriteId;
+      // For Pokémon characters: use empty spriteData (pure green rain, no human pixel reveal)
+      // and compute draw position + grid size from POKEMON_DRAW_SIZE
+      const mSpriteData: SpriteData = isPokemon ? [] : spriteData;
+      const drawW = isPokemon ? POKEMON_DRAW_SIZE * zoom : cached.width;
+      const drawH = isPokemon ? POKEMON_DRAW_SIZE * zoom : cached.height;
+      const mDrawX = Math.round(offsetX + ch.x * zoom - drawW / 2);
+      const mDrawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - drawH);
+      const gridSize = isPokemon ? POKEMON_DRAW_SIZE : undefined;
       const mCh = ch;
       drawables.push({
         zY: charZY,
         draw: (c) => {
-          renderMatrixEffect(c, mCh, mSpriteData, mDrawX, mDrawY, zoom);
+          renderMatrixEffect(c, mCh, mSpriteData, mDrawX, mDrawY, zoom, gridSize, gridSize);
         },
       });
       continue;
     }
+
+    // ── Pokémon sprite-sheet rendering ──────────────────────────────────────
+    if (ch.pokemonSpriteId) {
+      const url = ch.pokemonIsShiny
+        ? getPokemonShinySpriteUri(ch.pokemonSpriteId)
+        : getPokemonSpriteUri(ch.pokemonSpriteId);
+      if (url) {
+        const cacheKey = ch.pokemonIsShiny ? ch.pokemonSpriteId + '_shiny' : ch.pokemonSpriteId;
+        const sheet = getOrLoadSheet(cacheKey, url);
+        if (sheet) {
+          // Frame column: 4 walk frames, 2 type/idle frames
+          const frameCol =
+            ch.state === CharacterState.WALK
+              ? ch.frame % 4
+              : ch.state === CharacterState.TYPE
+                ? ch.frame % 2
+                : ch.frame % 2; // IDLE: slow bob between frame 0 and 1
+          // Row = direction: DOWN=0, LEFT=1, RIGHT=2, UP=3
+          const frameRow = ch.dir;
+          const sx = frameCol * POKEMON_SHEET_FRAME_SIZE;
+          const sy = frameRow * POKEMON_SHEET_FRAME_SIZE;
+          const drawW = POKEMON_DRAW_SIZE * zoom;
+          const drawH = POKEMON_DRAW_SIZE * zoom;
+          const pDrawX = Math.round(offsetX + ch.x * zoom - drawW / 2);
+          const pDrawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - drawH);
+
+          const isSelected = selectedAgentId !== null && ch.id === selectedAgentId;
+          const isHovered = hoveredAgentId !== null && ch.id === hoveredAgentId;
+          if (isSelected || isHovered) {
+            const boxAlpha = isSelected
+              ? SELECTED_OUTLINE_ALPHA * 0.35
+              : HOVERED_OUTLINE_ALPHA * 0.35;
+            drawables.push({
+              zY: charZY - OUTLINE_Z_SORT_OFFSET,
+              draw: (c) => {
+                c.save();
+                c.globalAlpha = boxAlpha;
+                c.fillStyle = '#ffffff';
+                c.fillRect(pDrawX, pDrawY, drawW, drawH);
+                c.restore();
+              },
+            });
+          }
+
+          const capturedSheet = sheet;
+          drawables.push({
+            zY: charZY,
+            draw: (c) => {
+              c.save();
+              c.imageSmoothingEnabled = false;
+              c.drawImage(
+                capturedSheet,
+                sx,
+                sy,
+                POKEMON_SHEET_FRAME_SIZE,
+                POKEMON_SHEET_FRAME_SIZE,
+                pDrawX,
+                pDrawY,
+                drawW,
+                drawH,
+              );
+              c.restore();
+            },
+          });
+          continue;
+        }
+      }
+    }
+    // ── End Pokémon rendering — fall through to pixel-art sprite ────────────
 
     // White outline: full opacity for selected, 50% for hover
     const isSelected = selectedAgentId !== null && ch.id === selectedAgentId;
@@ -552,6 +631,7 @@ export function renderFrame(
   tileColors?: Array<FloorColor | null>,
   layoutCols?: number,
   layoutRows?: number,
+  sceneImage?: HTMLImageElement | null,
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -566,8 +646,23 @@ export function renderFrame(
   const offsetX = Math.floor((canvasWidth - mapW) / 2) + Math.round(panX);
   const offsetY = Math.floor((canvasHeight - mapH) / 2) + Math.round(panY);
 
-  // Draw tiles (floor + wall base color)
-  renderTileGrid(ctx, tileMap, offsetX, offsetY, zoom, tileColors, layoutCols);
+  if (sceneImage) {
+    // Fill the entire canvas with a dimmed version of the scene as background
+    // (removes the hard boundary at the map edges)
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'low';
+    ctx.drawImage(sceneImage, 0, 0, canvasWidth, canvasHeight);
+    ctx.globalAlpha = 1.0;
+    // Draw the correctly-positioned and correctly-scaled scene on top
+    ctx.drawImage(sceneImage, offsetX, offsetY, mapW, mapH);
+    ctx.imageSmoothingEnabled = false;
+    ctx.restore();
+  } else {
+    // Draw tiles (floor + wall base color)
+    renderTileGrid(ctx, tileMap, offsetX, offsetY, zoom, tileColors, layoutCols);
+  }
 
   // Seat indicators (below furniture/characters, on top of floor)
   if (selection) {
@@ -584,7 +679,9 @@ export function renderFrame(
   }
 
   // Build wall instances for z-sorting with furniture and characters
-  const wallInstances = hasWallSprites() ? getWallInstances(tileMap, tileColors, layoutCols) : [];
+  // Skip when a scene image is active (scene provides its own visual walls)
+  const wallInstances =
+    !sceneImage && hasWallSprites() ? getWallInstances(tileMap, tileColors, layoutCols) : [];
   const allFurniture = wallInstances.length > 0 ? [...wallInstances, ...furniture] : furniture;
 
   // Draw walls + furniture + characters (z-sorted)

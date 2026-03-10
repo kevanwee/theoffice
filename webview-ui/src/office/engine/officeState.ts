@@ -596,6 +596,44 @@ export class OfficeState {
     }
   }
 
+  /** Assign a Pokémon sprite sheet to an agent's character. */
+  setPokemonSprite(agentId: number, spriteId: string | null, isShiny = false): void {
+    const ch = this.characters.get(agentId);
+    if (ch) {
+      ch.pokemonSpriteId = spriteId;
+      ch.pokemonIsShiny = isShiny;
+    }
+  }
+
+  /**
+   * Override the walkability map derived from a scene image's collision analysis.
+   * Replaces tileMap + walkableTiles without touching the saved layout.
+   */
+  applySceneCollision(cols: number, rows: number, tilesFlat: TileTypeVal[]): void {
+    const map: TileTypeVal[][] = [];
+    for (let r = 0; r < rows; r++) {
+      map.push(tilesFlat.slice(r * cols, (r + 1) * cols) as TileTypeVal[]);
+    }
+    this.tileMap = map;
+    this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles);
+    // Relocate characters that ended up on blocked tiles
+    for (const ch of this.characters.values()) {
+      if (!isWalkable(ch.tileCol, ch.tileRow, this.tileMap, this.blockedTiles)) {
+        if (this.walkableTiles.length > 0) {
+          const spawn = this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)];
+          ch.tileCol = spawn.col;
+          ch.tileRow = spawn.row;
+          const cx = spawn.col * TILE_SIZE + TILE_SIZE / 2;
+          const cy = spawn.row * TILE_SIZE + TILE_SIZE / 2;
+          ch.x = cx;
+          ch.y = cy;
+          ch.path = [];
+          ch.moveProgress = 0;
+        }
+      }
+    }
+  }
+
   showPermissionBubble(id: number): void {
     const ch = this.characters.get(id);
     if (ch) {

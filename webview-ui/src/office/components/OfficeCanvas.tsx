@@ -22,7 +22,40 @@ import type {
 } from '../engine/renderer.js';
 import { renderFrame } from '../engine/renderer.js';
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js';
-import { EditTool, TILE_SIZE } from '../types.js';
+import { EditTool, TILE_SIZE, TileType } from '../types.js';
+import type { TileType as TileTypeVal } from '../types.js';
+import { useTheme } from '../../themes/ThemeContext.js';
+
+/**
+ * Analyse a scene image to produce a walkability tile map.
+ * Scales the image down to (cols × rows) and classifies each pixel:
+ *  • very dark (luminance < 55) → WALL (trees, building shadows, dark borders)
+ *  • blue-dominant (likely water or rooftops) → WALL
+ *  • everything else → FLOOR_1 (walkable)
+ * Returns a flat array of TileTypeVal values, row-major.
+ */
+function analyzeSceneCollision(img: HTMLImageElement, cols: number, rows: number): TileTypeVal[] {
+  const offscreen = document.createElement('canvas');
+  offscreen.width = cols;
+  offscreen.height = rows;
+  const ctx2d = offscreen.getContext('2d');
+  if (!ctx2d) return new Array(cols * rows).fill(TileType.FLOOR_1) as TileTypeVal[];
+  ctx2d.drawImage(img, 0, 0, cols, rows);
+  const { data } = ctx2d.getImageData(0, 0, cols, rows);
+  const tiles: TileTypeVal[] = [];
+  for (let i = 0; i < cols * rows; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    // Very dark: tree canopy, building walls, mountain shadows
+    const veryDark = lum < 55;
+    // Blue-dominated: ponds, rooftop highlights, deep shadows
+    const blueDominated = b > r + 30 && b > g + 15 && lum < 130;
+    tiles.push(veryDark || blueDominated ? TileType.WALL : TileType.FLOOR_1);
+  }
+  return tiles;
+}
 
 interface OfficeCanvasProps {
   officeState: OfficeState;
@@ -70,6 +103,34 @@ export function OfficeCanvas({
   const isEraseDraggingRef = useRef(false);
   // Zoom scroll accumulator for trackpad pinch sensitivity
   const zoomAccumulatorRef = useRef(0);
+
+  // Scene background image (loaded when active theme/scene changes)
+  const { activeTheme, activeSceneId } = useTheme();
+  const sceneImageRef = useRef<HTMLImageElement | null>(null);
+  const sceneImageUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const activeScene = activeTheme?.scenes.find((s) => s.id === activeSceneId);
+    const url = activeScene?.sceneImageFile ?? null;
+    if (url === sceneImageUrlRef.current) return;
+    sceneImageUrlRef.current = url;
+    if (!url) {
+      sceneImageRef.current = null;
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      sceneImageRef.current = img;
+      // Derive walkability from scene pixels so buildings block movement
+      const layout = officeState.getLayout();
+      const tiles = analyzeSceneCollision(img, layout.cols, layout.rows);
+      officeState.applySceneCollision(layout.cols, layout.rows, tiles);
+    };
+    img.onerror = () => {
+      sceneImageRef.current = null;
+    };
+    img.src = url;
+  }, [activeTheme, activeSceneId, officeState]);
 
   // Clamp pan so the map edge can't go past a margin inside the viewport
   const clampPan = useCallback(
@@ -262,6 +323,7 @@ export function OfficeCanvas({
           officeState.getLayout().tileColors,
           officeState.getLayout().cols,
           officeState.getLayout().rows,
+          sceneImageRef.current,
         );
         offsetRef.current = { x: offsetX, y: offsetY };
 
