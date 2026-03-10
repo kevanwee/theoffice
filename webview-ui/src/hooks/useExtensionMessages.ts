@@ -14,6 +14,21 @@ import type { ThemePack } from '../themes/ThemePack.js';
 import { ThemeRegistry } from '../themes/ThemeRegistry.js';
 import { vscode } from '../vscodeApi.js';
 
+/** Pick a random Pokemon from the active theme, 1-in-10 chance of shiny. */
+function assignRandomPokemon(
+  os: OfficeState,
+  agentId: number,
+  onAssigned?: (agentId: number, characterId: string, isShiny: boolean) => void,
+): void {
+  const pack = ThemeRegistry.getActive();
+  if (!pack || pack.characters.length === 0) return;
+  const entry = pack.characters[Math.floor(Math.random() * pack.characters.length)];
+  const isShiny = Math.random() < 0.1;
+  os.setPokemonSprite(agentId, entry.spriteFile, isShiny);
+  onAssigned?.(agentId, entry.id, isShiny);
+  vscode.postMessage({ type: 'characterAssigned', agentId, characterId: entry.id, isShiny });
+}
+
 export interface SubagentCharacter {
   id: number;
   parentAgentId: number;
@@ -96,6 +111,8 @@ export function useExtensionMessages(
       hueShift?: number;
       seatId?: string;
       folderName?: string;
+      characterId?: string;
+      isShiny?: boolean;
     }> = [];
 
     const handler = (e: MessageEvent) => {
@@ -120,6 +137,12 @@ export function useExtensionMessages(
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
           os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+          if (p.characterId) {
+            os.setPokemonSprite(p.id, p.characterId, p.isShiny ?? false);
+            onCharacterAssigned?.(p.id, p.characterId, p.isShiny ?? false);
+          } else {
+            assignRandomPokemon(os, p.id, onCharacterAssigned);
+          }
         }
         pendingAgents = [];
         layoutReadyRef.current = true;
@@ -133,6 +156,7 @@ export function useExtensionMessages(
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         setSelectedAgent(id);
         os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+        assignRandomPokemon(os, id, onCharacterAssigned);
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number;
@@ -167,15 +191,22 @@ export function useExtensionMessages(
           { palette?: number; hueShift?: number; seatId?: string }
         >;
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
+        const charAssignments = (msg.characterAssignments || {}) as Record<
+          number,
+          { characterId: string; isShiny: boolean }
+        >;
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         for (const id of incoming) {
           const m = meta[id];
+          const ca = charAssignments[id];
           pendingAgents.push({
             id,
             palette: m?.palette,
             hueShift: m?.hueShift,
             seatId: m?.seatId,
             folderName: folderNames[id],
+            characterId: ca?.characterId,
+            isShiny: ca?.isShiny,
           });
         }
         setAgents((prev) => {

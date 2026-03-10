@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { BottomToolbar } from './components/BottomToolbar.js';
 import { CharacterPicker } from './components/CharacterPicker.js';
@@ -123,7 +123,7 @@ function EditActionBar({
 
 function App() {
   const editor = useEditorActions(getOfficeState, editorState);
-  const { assignCharacter } = useTheme();
+  const { assignCharacter, characterAssignments, activeTheme } = useTheme();
 
   const isEditDirty = useCallback(
     () => editor.isEditMode && editor.isDirty,
@@ -183,6 +183,18 @@ function App() {
   }, []);
 
   const officeState = getOfficeState();
+
+  // Sync Pokémon sprite-sheet assignments from ThemeContext → OfficeState whenever
+  // the user picks a character or restored assignments arrive from the extension.
+  useEffect(() => {
+    const os = getOfficeState();
+    for (const assignment of characterAssignments) {
+      const entry = activeTheme?.characters.find((c) => c.id === assignment.characterId);
+      if (entry) {
+        os.setPokemonSprite(assignment.agentId, entry.spriteFile, assignment.isShiny);
+      }
+    }
+  }, [characterAssignments, activeTheme]);
 
   // Force dependency on editorTickForKeyboard to propagate keyboard-triggered re-renders
   void editorTickForKeyboard;
@@ -268,7 +280,6 @@ function App() {
 
       <BottomToolbar
         isEditMode={editor.isEditMode}
-        onOpenClaude={editor.handleOpenClaude}
         onToggleEditMode={editor.handleToggleEditMode}
         isDebugMode={isDebugMode}
         onToggleDebugMode={handleToggleDebugMode}
