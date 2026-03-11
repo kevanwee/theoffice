@@ -3,7 +3,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { CopilotAdapter } from './agentAdapters/CopilotAdapter.js';
+import { AgentAdapterRegistry } from './agentAdapters/AgentAdapterRegistry.js';
+import type { BackendType } from './agentAdapters/IAgentAdapter.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -92,8 +93,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       if (message.type === 'openClaude') {
         const backend = (message.backend as string | undefined) ?? 'claude';
-        if (backend === 'copilot') {
-          await this.launchCopilotAgent(message.folderPath as string | undefined);
+        if (backend === 'copilot' || backend === 'codex') {
+          await this.launchAdapterAgent(
+            backend as BackendType,
+            message.folderPath as string | undefined,
+          );
         } else {
           await launchNewTerminal(
             this.nextAgentId,
@@ -121,6 +125,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const closeId = message.id as number;
         const agent = this.agents.get(closeId);
         if (agent) {
+          // Clean up registry-managed agent if applicable
+          AgentAdapterRegistry.instance.removeAgent(closeId);
           agent.copilotWatcher?.dispose();
           agent.terminalRef?.dispose();
           // For non-terminal agents (e.g. Copilot), no onDidCloseTerminal fires,
@@ -477,9 +483,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
    * Load the Pokémon ThemePack (theme.json + catalog.json) and send it to the
    * webview so it can populate ThemeRegistry.
    */
-  private async launchCopilotAgent(folderPath: string | undefined): Promise<void> {
-    const adapter = new CopilotAdapter();
+  /**
+   * Launch an agent via the AgentAdapterRegistry (used for Copilot, Codex, etc.)
+   */
+  private async launchAdapterAgent(
+    backendType: BackendType,
+    folderPath: string | undefined,
+  ): Promise<void> {
+    const registry = AgentAdapterRegistry.instance;
+    const adapter = registry.getAdapter(backendType);
+    if (!adapter) {
+      vscode.window.showErrorMessage(
+        `Pixel Agents: No adapter found for backend "${backendType}".`,
+      );
+      return;
+    }
+
     const agentId = this.nextAgentId.current++;
+    const terminalIndex = this.nextTerminalIndex.current++;
     const folderName = folderPath ? path.basename(folderPath) : undefined;
 
     const agent: AgentState = {
@@ -497,48 +518,70 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
       permissionSent: false,
       hadToolsInTurn: false,
       folderName,
-      backendType: 'copilot',
+      backendType,
     };
 
     this.agents.set(agentId, agent);
     this.activeAgentId.current = agentId;
+    this.persistAgents();
     this.webview?.postMessage({ type: 'agentCreated', id: agentId, folderName });
 
-    // Launch the adapter (opens Copilot Chat panel)
-    const handle = await adapter.launchAgent(folderPath, agentId, 0);
+    // Launch via registry — this calls adapter.launchAgent + adapter.watchAgent
+    const managed = await registry.launchAgent(
+      backendType,
+      agentId,
+      terminalIndex,
+      folderPath,
+      (_id, event) => {
+        const webview = this.webview;
+        if (!webview) return;
+        if (event.kind === 'tool_start') {
+          agent.activeToolIds.add(event.toolId);
+          agent.activeToolStatuses.set(event.toolId, event.statusText);
+          agent.activeToolNames.set(event.toolId, event.toolName);
+          webview.postMessage({
+            type: 'agentToolStart',
+            id: agentId,
+            toolId: event.toolId,
+            status: event.statusText,
+          });
+        } else if (event.kind === 'tool_end') {
+          agent.activeToolIds.delete(event.toolId);
+          agent.activeToolStatuses.delete(event.toolId);
+          agent.activeToolNames.delete(event.toolId);
+          webview.postMessage({ type: 'agentToolDone', id: agentId, toolId: event.toolId });
+        } else if (event.kind === 'waiting') {
+          agent.isWaiting = true;
+          webview.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
+        } else if (event.kind === 'permission') {
+          agent.permissionSent = true;
+          webview.postMessage({ type: 'agentToolPermission', id: agentId });
+        } else if (event.kind === 'completed') {
+          agent.isWaiting = false;
+          agent.activeToolIds.clear();
+          agent.activeToolStatuses.clear();
+          agent.activeToolNames.clear();
+          webview.postMessage({ type: 'agentToolsClear', id: agentId });
+        }
+      },
+    );
 
-    // Watch for events and forward them to the webview
-    const watcher = adapter.watchAgent(handle, (event) => {
-      const webview = this.webview;
-      if (!webview) return;
-      if (event.kind === 'tool_start') {
-        agent.activeToolIds.add(event.toolId);
-        agent.activeToolStatuses.set(event.toolId, event.statusText);
-        agent.activeToolNames.set(event.toolId, event.toolName);
-        webview.postMessage({
-          type: 'agentToolStart',
-          id: agentId,
-          toolId: event.toolId,
-          status: event.statusText,
-        });
-      } else if (event.kind === 'tool_end') {
-        agent.activeToolIds.delete(event.toolId);
-        agent.activeToolStatuses.delete(event.toolId);
-        agent.activeToolNames.delete(event.toolId);
-        webview.postMessage({ type: 'agentToolDone', id: agentId, toolId: event.toolId });
-      } else if (event.kind === 'waiting') {
-        agent.isWaiting = true;
-        webview.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
-      } else if (event.kind === 'completed') {
-        agent.isWaiting = false;
-        agent.activeToolIds.clear();
-        agent.activeToolStatuses.clear();
-        agent.activeToolNames.clear();
-        webview.postMessage({ type: 'agentToolsClear', id: agentId });
-      }
-    });
+    if (!managed) {
+      // Launch failed — clean up
+      this.agents.delete(agentId);
+      this.persistAgents();
+      this.webview?.postMessage({ type: 'agentClosed', id: agentId });
+      vscode.window.showErrorMessage(`Pixel Agents: Failed to launch ${backendType} agent.`);
+      return;
+    }
 
-    agent.copilotWatcher = watcher;
+    // Store terminal ref if the adapter created one
+    if (managed.handle.terminalRef) {
+      agent.terminalRef = managed.handle.terminalRef;
+    }
+
+    // Store a disposable so we can clean up the watcher on close
+    agent.copilotWatcher = managed.watcher;
   }
 
   private sendThemePack(webview: vscode.Webview, extRoot: string): void {
@@ -610,6 +653,8 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   dispose() {
     this.layoutWatcher?.dispose();
     this.layoutWatcher = null;
+    // Clean up all registry-managed agents
+    AgentAdapterRegistry.instance.disposeAll();
     for (const id of [...this.agents.keys()]) {
       removeAgent(
         id,

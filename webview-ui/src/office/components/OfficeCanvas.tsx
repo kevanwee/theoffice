@@ -33,13 +33,15 @@ import { useTheme } from '../../themes/ThemeContext.js';
  * image to 4× the tile resolution first, then classifying each sample with
  * colour rules tuned to the LeoB ORAS pixel-art palette:
  *
- *  • Very dark  (lum < 65)                               → WALL  (outlines, deep tree shadow)
- *  • Tree canopy (R < G×0.35, G > 60, lum < 135)        → WALL  (dark saturated green)
- *  • Water       (B > R+30 && B > G+15 && lum < 165)    → WALL  (ponds, rivers)
- *  • Red rooftop (R > G×2.5 && R > B×2.5 && lum < 140) → WALL  (Pokémon Center, buildings)
- *  • Else                                                → FLOOR (paths, grass, plazas)
+ *  • Very dark  (lum < 70)                                → WALL  (outlines, shadows, walls)
+ *  • Tree canopy (green-dominant, various sat/lum ranges)  → WALL  (foliage, bushes)
+ *  • Water       (blue-dominant)                           → WALL  (ponds, rivers, oceans)
+ *  • Red rooftop (highly red-dominant)                     → WALL  (Pokémon Center, buildings)
+ *  • Building wall (grey/beige with low sat, mid-lum)      → WALL  (walls, houses, structures)
+ *  • Fence/border (brown/dark with low sat)                → WALL  (fences, ledges)
+ *  • Else                                                  → FLOOR (paths, grass, plazas)
  *
- * A tile is marked WALL when ≥ 30 % of its 16 samples are obstacle-coloured.
+ * A tile is marked WALL when ≥ 25 % of its 16 samples are obstacle-coloured.
  */
 function analyzeSceneCollision(img: HTMLImageElement, cols: number, rows: number): TileTypeVal[] {
   const SAMPLES = 4; // 4×4 sub-pixels per tile
@@ -50,22 +52,48 @@ function analyzeSceneCollision(img: HTMLImageElement, cols: number, rows: number
   offscreen.height = H;
   const ctx2d = offscreen.getContext('2d');
   if (!ctx2d) return new Array(cols * rows).fill(TileType.FLOOR_1) as TileTypeVal[];
-  // Scale the scene image to the super-sampled resolution. The browser's
-  // bilinear downscaling averages source pixels, giving us area-representative
-  // colour samples for free.
   ctx2d.drawImage(img, 0, 0, W, H);
   const { data } = ctx2d.getImageData(0, 0, W, H);
 
   function isObstacle(r: number, g: number, b: number): boolean {
     const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    if (lum < 65) return true; // dark outlines / shadows
-    if (g > 60 && r < g * 0.35 && lum < 135) return true; // tree canopy (low R:G ratio)
-    if (b > r + 30 && b > g + 15 && lum < 165) return true; // water / ponds
-    if (r > g * 2.5 && r > b * 2.5 && lum < 140) return true; // red rooftops
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    const chroma = maxC - minC;
+    const sat = maxC > 0 ? chroma / maxC : 0;
+
+    // Dark pixels: outlines, deep shadows, building walls
+    if (lum < 70) return true;
+
+    // Tree canopy: green-dominant with various luminance ranges
+    // Covers dark trees, light foliage, and bushes
+    if (g > 50 && g > r * 1.2 && g > b * 1.1 && lum < 160) return true;
+
+    // Dense foliage: highly saturated green
+    if (sat > 0.3 && g > r && g > b && lum < 145) return true;
+
+    // Water / ponds: blue-dominant
+    if (b > r + 20 && b > g + 10 && lum < 180) return true;
+
+    // Red rooftops / building tops
+    if (r > g * 2.0 && r > b * 2.0 && lum < 160) return true;
+
+    // Orange/brown rooftops and building accents
+    if (r > 140 && g < 120 && b < 80 && r > g * 1.5) return true;
+
+    // Building walls: mid-luminance, very low saturation and low chroma (grey/concrete)
+    // Narrowed to avoid matching light paths — only truly flat monotone surfaces
+    if (sat < 0.1 && lum > 110 && lum < 175 && chroma < 20) return true;
+
+    // Fences, ledges, elevated terrain edges: brown/dark-ish with moderate chroma
+    if (r > 80 && g > 50 && b < 60 && lum < 120 && r > b * 1.5) return true;
+
     return false;
   }
 
-  const THRESHOLD = Math.ceil(SAMPLES * SAMPLES * 0.3); // ≥30 % → WALL
+  // Lower threshold: 25% of samples is enough to mark as obstacle
+  // This catches tiles that partially overlap buildings/trees
+  const THRESHOLD = Math.ceil(SAMPLES * SAMPLES * 0.25);
   const tiles: TileTypeVal[] = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -81,6 +109,17 @@ function analyzeSceneCollision(img: HTMLImageElement, cols: number, rows: number
       tiles.push(wallCount >= THRESHOLD ? TileType.WALL : TileType.FLOOR_1);
     }
   }
+
+  // Post-processing: ensure edges of the map are walls (characters shouldn't walk off-screen)
+  for (let col = 0; col < cols; col++) {
+    tiles[col] = TileType.WALL; // top row
+    tiles[(rows - 1) * cols + col] = TileType.WALL; // bottom row
+  }
+  for (let row = 0; row < rows; row++) {
+    tiles[row * cols] = TileType.WALL; // left column
+    tiles[row * cols + cols - 1] = TileType.WALL; // right column
+  }
+
   return tiles;
 }
 

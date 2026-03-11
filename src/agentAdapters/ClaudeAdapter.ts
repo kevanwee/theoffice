@@ -351,6 +351,29 @@ export class ClaudeAdapter implements IAgentAdapter {
           }
         }
       }
+
+      // ── Turn completion (system/turn_duration) ──────────────────────────
+      if (record.type === 'system' && record.subtype === 'turn_duration') {
+        // Reliable turn-end signal — clear all tool state
+        for (const toolId of state.activeToolIds) {
+          const toolName = state.activeToolNames.get(toolId) || '';
+          onEvent({ kind: 'tool_end', toolId, toolName });
+        }
+        state.activeToolIds.clear();
+        state.activeToolNames.clear();
+        state.isWaiting = true;
+        state.hadToolsInTurn = false;
+        state.permissionSent = false;
+        if (state.waitingTimer) {
+          clearTimeout(state.waitingTimer);
+          state.waitingTimer = null;
+        }
+        if (state.permissionTimer) {
+          clearTimeout(state.permissionTimer);
+          state.permissionTimer = null;
+        }
+        onEvent({ kind: 'waiting' });
+      }
     } catch {
       /* malformed JSON */
     }
