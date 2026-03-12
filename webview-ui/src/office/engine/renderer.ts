@@ -21,6 +21,7 @@ import {
   GRID_LINE_COLOR,
   HOVERED_OUTLINE_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
+  POKEMON_DIR_TO_ROW,
   POKEMON_DRAW_SIZE,
   POKEMON_SHEET_FRAME_SIZE,
   ROTATE_BUTTON_BG,
@@ -164,8 +165,8 @@ export function renderScene(
               : ch.state === CharacterState.TYPE
                 ? ch.frame % 2
                 : ch.frame % 2; // IDLE: slow bob between frame 0 and 1
-          // Row = direction: DOWN=0, LEFT=1, RIGHT=2, UP=3
-          const frameRow = ch.dir;
+          // Pokeemerald sprite sheet row order: South(DOWN)=0, North(UP)=1, West(LEFT)=2, East(RIGHT)=3
+          const frameRow = POKEMON_DIR_TO_ROW[ch.dir];
           const frameSize = sheet.naturalWidth / 4;
           const sx = frameCol * frameSize;
           const sy = frameRow * frameSize;

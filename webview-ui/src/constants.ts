@@ -102,6 +102,13 @@ export const NOTIFICATION_VOLUME = 0.14;
 export const POKEMON_SHEET_FRAME_SIZE = 64;
 /** Draw size in sprite pixels at zoom=1 (2 tiles × 2 tiles = 32px) */
 export const POKEMON_DRAW_SIZE = TILE_SIZE * 2;
+/**
+ * Maps Direction enum values to sprite sheet row indices following the
+ * pokeemerald overworld convention: Row 0=South(DOWN), Row 1=North(UP),
+ * Row 2=West(LEFT), Row 3=East(RIGHT).
+ * Direction enum: DOWN=0, LEFT=1, RIGHT=2, UP=3
+ */
+export const POKEMON_DIR_TO_ROW = [0, 2, 3, 1] as const;
 
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1;
