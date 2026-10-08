@@ -138,3 +138,18 @@ test('incremental file reads do not replay lines and recover after truncation', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('discovers a local-date rollout across the UTC year boundary', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'office-codex-local-date-'));
+  try {
+    const dir = path.join(root, '2025', '12', '31');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'rollout-local-date.jsonl');
+    const timestamp = '2026-01-01T00:30:00.000Z';
+    fs.writeFileSync(file, record('session_meta', { timestamp, cwd, source: 'cli' }));
+    assert.deepEqual(findCodexRollouts(root, Date.parse(timestamp), cwd, new Set()), [file]);
+    assert.deepEqual(findCodexRollouts(root, Date.parse(timestamp) + 1, cwd, new Set()), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

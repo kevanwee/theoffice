@@ -53,3 +53,4 @@ export const DEFAULT_THEME_ID = 'office';
 // Codex rollout reads (bytes)
 export const CODEX_META_BYTES = 256 * 1024;
 export const CODEX_LOG_CHUNK_BYTES = 1024 * 1024;
+export const CODEX_DATE_SCAN_MARGIN_MS = 24 * 60 * 60 * 1000;

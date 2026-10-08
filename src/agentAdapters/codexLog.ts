@@ -5,6 +5,7 @@ import { StringDecoder } from 'string_decoder';
 
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
+  CODEX_DATE_SCAN_MARGIN_MS,
   CODEX_LOG_CHUNK_BYTES,
   CODEX_META_BYTES,
 } from '../constants.js';
@@ -36,7 +37,12 @@ export function findCodexRollouts(
   claimed: Set<string>,
 ): string[] {
   const matches: string[] = [];
-  const day = new Date(after).toISOString().slice(0, 10).replaceAll('-', '');
+  // Codex partitions directories by local date but metadata uses UTC.
+  // Include the previous UTC day, then apply the exact timestamp below.
+  const day = new Date(after - CODEX_DATE_SCAN_MARGIN_MS)
+    .toISOString()
+    .slice(0, 10)
+    .replaceAll('-', '');
   const normalise = (p: string) =>
     process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p);
   function walk(dir: string, parts: string[]) {
