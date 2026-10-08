@@ -121,7 +121,7 @@ Switch between them any time from the **Settings** modal (⚙ gear icon).
 |---|---|
 | **Claude Code** | Tails `~/.claude/projects/<workspace>/<session>.jsonl` |
 | **GitHub Copilot** | Listens to `vscode.lm.onDidReceiveChatRequest` events |
-| **OpenAI Codex** | Tails `~/.codex/sessions/<session>/events.jsonl` |
+| **OpenAI Codex** | Tails `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (defaults to `~/.codex`) |
 
 ---
 
@@ -370,3 +370,32 @@ flowchart LR
 <img src="Pokemon/DIANCIE.png" width="48" alt="Diancie">
 
 </div>
+
+## Codex telemetry and validation
+
+The Codex adapter reads `session_meta`, wrapped `response_item` calls/outputs
+and `event_msg` turn completion/abort events. It preserves partial JSONL lines
+and UTF-8 characters across writes, with polling alongside filesystem notifications.
+Session discovery checks the CLI source, working directory and launch timestamp,
+and prevents two characters from claiming the same log.
+
+Launch one Codex agent at a time in a given folder and wait for its first activity
+before launching another there. Ambiguous matches produce a warning instead of
+attributing another terminal's work. Existing/resumed sessions, `/new` log switches
+and sessions launched outside the extension are not automatically reattached.
+This is file-based telemetry, so an upstream log-format change may require an update.
+
+```sh
+npm ci
+npm ci --prefix webview-ui
+npm run test:codex
+npm run build
+```
+
+The offline fixtures exercise discovery, wrapped function/custom tools, call IDs,
+partial writes, UTF-8, malformed records, completion and truncation. CI runs these
+checks and the complete extension/webview build on Linux and Windows. No model
+credentials or paid requests are needed for validation.
+
+Format reference: [Codex rollout fixtures](https://github.com/openai/codex/blob/main/codex-rs/app-server/tests/common/rollout.rs)
+and [protocol](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs).
