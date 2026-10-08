@@ -49,3 +49,7 @@ export const TERMINAL_NAME_PREFIX = 'Agent';
 // -- Theme / Asset Paths ------------------------------------------------------
 export const POKEMON_THEME_ID = 'pokemon';
 export const DEFAULT_THEME_ID = 'office';
+
+// Codex rollout reads (bytes)
+export const CODEX_META_BYTES = 256 * 1024;
+export const CODEX_LOG_CHUNK_BYTES = 1024 * 1024;

@@ -211,3 +211,14 @@ All magic numbers and strings are centralized — never add inline constants to 
 - `WebviewViewProvider` (not `WebviewPanel`) — lives in panel area alongside terminal
 - Inline esbuild problem matcher (no extra extension needed)
 - Webview is separate Vite project with own `node_modules`/`tsconfig`
+
+## Codex adapter
+
+`src/agentAdapters/codexLog.ts` contains host-independent rollout discovery and
+incremental decoding. It reads date-partitioned rollout files under CODEX_HOME,
+filters CLI session metadata by launch time and cwd, and exposes wrapped call,
+output and turn-end events. The adapter owns terminal/session claims and disposes
+all watchers and polling timers. Concurrent ambiguous launches remain unbound.
+Do not reintroduce newest-mtime matching or assume events.jsonl session folders.
+Validate with `npm run test:codex` and `npm run build`; fixtures are synthetic,
+never copied from personal session logs.
